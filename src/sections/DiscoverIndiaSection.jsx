@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
-import { Compass, Sparkles } from 'lucide-react';
+import { Compass } from 'lucide-react';
 import { DESTINATIONS } from '../data/destinationsData';
 import { DestinationCard } from '../components/DestinationCard';
 import { useTravelMode } from '../context/TravelModeContext';
@@ -16,7 +16,13 @@ export const DiscoverIndiaSection = () => {
 
   return (
     <section
-      id="discover"
+      id="explore"
+      ref={(node) => {
+        if (node) {
+          node.id = 'explore';
+          node.dataset.discoverId = 'discover';
+        }
+      }}
       className="relative z-20 py-24 sm:py-36 bg-bg text-text-main transition-colors duration-500 overflow-hidden"
     >
       {/* Background Ambience / Subtle Top Blend */}

@@ -36,7 +36,8 @@ export const HeroSection = ({ isIntroComplete = true }) => {
   const current = content[travelMode];
 
   const handleExploreClick = () => {
-    const exploreElement = document.getElementById('explore');
+    // Look for both possible section IDs to ensure compatibility on GitHub Pages
+    const exploreElement = document.getElementById('explore') || document.getElementById('discover');
     if (exploreElement) {
       exploreElement.scrollIntoView({ behavior: 'smooth' });
     } else {

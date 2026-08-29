@@ -75,7 +75,7 @@ export const DiscoverIndiaSection = () => {
           </motion.p>
         </div>
 
-        {/* Asymmetric Editorial Grid */}
+        {/* Asymmetric Editorial Grid with Photos */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-12 gap-5 sm:gap-7 lg:gap-8">
           {currentDestinations.map((destination, index) => (
             <DestinationCard

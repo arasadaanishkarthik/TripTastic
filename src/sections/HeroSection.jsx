@@ -4,7 +4,6 @@ import { motion, AnimatePresence, useScroll, useTransform, useReducedMotion } fr
 import { ArrowRight, Sparkles } from 'lucide-react';
 import { Button } from '../components/Button';
 import { ScrollIndicator } from '../components/ScrollIndicator';
-// REMOVE THIS LINE: import { TravelModeToggle } from '../components/TravelModeToggle';
 import { HeroBackground } from '../components/hero/HeroBackground';
 import { AnimatedHeading } from '../components/hero/AnimatedHeading';
 import { useTravelMode } from '../context/TravelModeContext';
@@ -36,6 +35,15 @@ export const HeroSection = ({ isIntroComplete = true }) => {
 
   const current = content[travelMode];
 
+  const handleExploreClick = () => {
+    const exploreElement = document.getElementById('explore');
+    if (exploreElement) {
+      exploreElement.scrollIntoView({ behavior: 'smooth' });
+    } else {
+      window.scrollBy({ top: window.innerHeight, behavior: 'smooth' });
+    }
+  };
+
   return (
     <section className="relative w-full min-h-screen flex items-center justify-center overflow-hidden pt-28 pb-20 bg-[#07111F]">
       <HeroBackground />
@@ -44,8 +52,6 @@ export const HeroSection = ({ isIntroComplete = true }) => {
         style={{ y: yContent }}
         className="relative z-10 max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 text-center flex flex-col items-center"
       >
-        {/* REMOVED THE TRAVEL MODE TOGGLE BLOCK FROM HERE */}
-
         <AnimatePresence mode="wait">
           <motion.div
             key={travelMode + '-badge'}
@@ -92,9 +98,7 @@ export const HeroSection = ({ isIntroComplete = true }) => {
             variant="secondary"
             size="lg"
             className="w-full sm:w-auto bg-black/40 text-white border-white/20 hover:bg-black/60 hover:text-white"
-            onClick={() => {
-              document.getElementById('explore')?.scrollIntoView({ behavior: 'smooth' });
-            }}
+            onClick={handleExploreClick}
           >
             {current.secondaryBtn}
           </Button>

@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter, Routes, Route, useNavigate } from 'react-router-dom';
+import { HashRouter as Router, Routes, Route } from 'react-router-dom'; // Changed BrowserRouter to HashRouter
 import { useLenis } from './hooks/useLenis';
 import { useIntroExperience } from './hooks/useIntroExperience';
 import { IntroExperience } from './components/intro/IntroExperience';
@@ -49,7 +49,7 @@ function HomePage() {
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <Router>
       <TravelModeProvider>
         <TripPlannerProvider>
           <Routes>
@@ -60,6 +60,6 @@ export default function App() {
           </Routes>
         </TripPlannerProvider>
       </TravelModeProvider>
-    </BrowserRouter>
+    </Router>
   );
 }

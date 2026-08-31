@@ -1,29 +1,27 @@
 // src/components/planner/DestinationSearch.jsx
-import React, { useState } from 'react';
+import React from 'react';
 import { motion } from 'framer-motion';
-import { Search, MapPin, ArrowRight, Check } from 'lucide-react';
+import { Search, MapPin, ArrowRight, Check, Loader2 } from 'lucide-react';
 import { useTripPlanner } from '../../context/TripPlannerContext';
-
-// Import your mock data. Adjust this path if your data is located elsewhere!
-import { PLANNER_DESTINATIONS } from '../../data/destinations';
+import { useDestinationSearch } from '../../hooks/useDestinationSearch';
 
 export const DestinationSearch = () => {
-  const { tripDetails, updateTripDetails, nextStep } = useTripPlanner();
-  const [searchQuery, setSearchQuery] = useState('');
-  
-  // Safe fallback to empty array if PLANNER_DESTINATIONS isn't found
-  const destinations = PLANNER_DESTINATIONS || [];
+  const { trip, updateTrip, nextStep } = useTripPlanner();
 
-  const filteredDestinations = destinations.filter((dest) =>
-    dest.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    dest.state?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const {
+    query: searchQuery,
+    setQuery: setSearchQuery,
+    filteredDestinations,
+    isLoading,
+  } = useDestinationSearch(trip?.mode || 'national');
 
-  const selectedId = tripDetails?.destination?.id;
+  const selectedId = trip?.destination?.id;
 
   const handleSelect = (destination) => {
-    updateTripDetails({ destination });
+    updateTrip({ destination });
   };
+
+
 
   return (
     <div className="flex flex-col h-full max-w-5xl mx-auto w-full pt-8 pb-4">

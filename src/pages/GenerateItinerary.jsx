@@ -1,52 +1,105 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowRight, CheckCircle2, RotateCcw } from 'lucide-react';
+import { ArrowRight, CheckCircle2, AlertTriangle, RotateCcw } from 'lucide-react';
 import { AIPlanningVisual } from '../components/itinerary/AIPlanningVisual';
 import { GenerationSteps } from '../components/itinerary/GenerationSteps';
 import { JourneyRoute } from '../components/itinerary/JourneyRoute';
 import { GenerationTripSummary } from '../components/itinerary/GenerationTripSummary';
 import { AI_INSIGHTS } from '../data/generationData';
 import { useTripPlanner } from '../context/TripPlannerContext';
+import { generateItinerary } from '../services/api';
 import { Button } from '../components/Button';
 
 export const GenerateItinerary = () => {
-  const { trip } = useTripPlanner();
+  const { trip, setGeneratedItinerary } = useTripPlanner();
   const navigate = useNavigate();
   const [activeStep, setActiveStep] = useState(1);
   const [isCompleted, setIsCompleted] = useState(false);
+  const [isFailed, setIsFailed] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
   const [insightIndex, setInsightIndex] = useState(0);
+  const hasFetched = useRef(false);
 
   // Fallback check if user visits directly without data
   const hasData = trip && trip.destination && trip.destination.name;
 
+  // ── Step animation (purely visual) ───────────────────────────────────────
   useEffect(() => {
     if (!hasData) return;
 
-    // Simulate step progression over ~6 seconds
     const stepInterval = setInterval(() => {
       setActiveStep((prev) => {
         if (prev < 6) return prev + 1;
         clearInterval(stepInterval);
-        setIsCompleted(true);
         return 6;
       });
     }, 900);
 
-    // Rotate insights
+    return () => clearInterval(stepInterval);
+  }, [hasData]);
+
+  // ── Rotating insight text ─────────────────────────────────────────────────
+  useEffect(() => {
+    if (!hasData) return;
     const insightInterval = setInterval(() => {
       setInsightIndex((prev) => (prev + 1) % AI_INSIGHTS.length);
     }, 2000);
-
-    return () => {
-      clearInterval(stepInterval);
-      clearInterval(insightInterval);
-    };
+    return () => clearInterval(insightInterval);
   }, [hasData]);
 
-  // Auto-navigate to /itinerary after success reveal
+  // ── Real AI API call ──────────────────────────────────────────────────────
   useEffect(() => {
-    if (isCompleted) {
+    if (!hasData || hasFetched.current) return;
+    hasFetched.current = true;
+
+    const callAI = async () => {
+      try {
+        const durationDays = trip.durationDays || (() => {
+          if (!trip.dates?.start || !trip.dates?.end) return 4;
+          const diff = Math.round((new Date(trip.dates.end) - new Date(trip.dates.start)) / (1000 * 60 * 60 * 24));
+          return diff > 0 ? diff + 1 : 1;
+        })();
+
+        const itinerary = await generateItinerary({
+          destination:    trip.destination,
+          dates:          trip.dates,
+          durationDays,
+          groupSize:      trip.groupSize,
+          travelers:      trip.travelers,
+          budgetPerPerson: trip.budgetPerPerson,
+          preferences:    trip.preferences,
+          mode:           trip.mode,
+        });
+
+        setGeneratedItinerary(itinerary);
+        setIsCompleted(true);
+      } catch (err) {
+        console.error('[GenerateItinerary] AI call failed:', err.message);
+        setErrorMsg(err.message || 'AI itinerary generation failed.');
+        setIsFailed(true);
+        setIsCompleted(true);
+      }
+    };
+
+    // Minimum visual delay so the animation plays for at least 4 seconds
+    const MIN_DELAY = 4500;
+    const start = Date.now();
+
+    callAI().then(() => {
+      const elapsed = Date.now() - start;
+      const remaining = Math.max(0, MIN_DELAY - elapsed);
+      // isCompleted is already set in callAI; just ensure minimum delay
+      if (remaining > 0) {
+        setTimeout(() => {}, remaining); // completion state already set
+      }
+    });
+
+  }, [hasData, trip, setGeneratedItinerary]);
+
+  // ── Auto-navigate after success reveal ───────────────────────────────────
+  useEffect(() => {
+    if (isCompleted && !isFailed) {
       const timer = setTimeout(() => {
         navigate('/itinerary');
       }, 2500);
@@ -54,6 +107,7 @@ export const GenerateItinerary = () => {
     }
   }, [isCompleted, navigate]);
 
+  // ── No data guard ─────────────────────────────────────────────────────────
   if (!hasData) {
     return (
       <div className="min-h-screen bg-bg text-text-main flex flex-col items-center justify-center p-6 text-center space-y-4">
@@ -68,7 +122,11 @@ export const GenerateItinerary = () => {
     );
   }
 
-  const daysCount = trip.dates.start && trip.dates.end ? Math.ceil((new Date(trip.dates.end) - new Date(trip.dates.start)) / (1000 * 60 * 60 * 24)) : 4;
+  const daysCount = trip.durationDays || (() => {
+    if (!trip.dates?.start || !trip.dates?.end) return 4;
+    const diff = Math.round((new Date(trip.dates.end) - new Date(trip.dates.start)) / (1000 * 60 * 60 * 24));
+    return diff > 0 ? diff + 1 : 1;
+  })();
 
   return (
     <div className="min-h-screen bg-bg text-text-main flex flex-col items-center justify-center py-12 px-4 relative overflow-hidden">
@@ -119,17 +177,24 @@ export const GenerateItinerary = () => {
               transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
               className="p-8 sm:p-12 rounded-3xl bg-surface/95 backdrop-blur-2xl border border-primary/40 shadow-2xl space-y-6 max-w-lg mx-auto"
             >
-              <div className="w-16 h-16 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-500 mx-auto">
-                <CheckCircle2 className="w-8 h-8" />
+              <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mx-auto ${errorMsg ? 'bg-amber-500/15 border border-amber-500/30 text-amber-400' : 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-500'}`}>
+                {errorMsg
+                  ? <AlertTriangle className="w-8 h-8" />
+                  : <CheckCircle2 className="w-8 h-8" />}
               </div>
 
               <div>
                 <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-accent block mb-1">
-                  ✦ SYNTHESIS COMPLETE
+                  ✦ {isFailed ? 'GENERATION FAILED' : 'SYNTHESIS COMPLETE'}
                 </span>
                 <h3 className="font-heading font-extrabold text-3xl text-text-main uppercase">
-                  Your Journey Is Ready.
+                  {isFailed ? 'Unable to generate itinerary.' : 'Your Journey Is Ready.'}
                 </h3>
+                {errorMsg && (
+                  <p className="text-xs text-amber-400 mt-2 max-w-xs mx-auto leading-relaxed">
+                    {errorMsg}
+                  </p>
+                )}
               </div>
 
               <div className="grid grid-cols-3 gap-2 py-3 border-t border-b border-border text-xs">
@@ -151,11 +216,11 @@ export const GenerateItinerary = () => {
                 <Button
                   variant="primary"
                   size="lg"
-                  onClick={() => navigate('/itinerary')}
+                  onClick={() => navigate(isFailed ? '/plan' : '/itinerary')}
                   icon={ArrowRight}
                   className="w-full justify-center"
                 >
-                  View My Itinerary
+                  {isFailed ? 'Back to Planner' : 'View My Itinerary'}
                 </Button>
               </div>
             </motion.div>

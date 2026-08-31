@@ -8,11 +8,11 @@ export const DatesStep = () => {
   const calculateDays = (start, end) => {
     if (!start || !end) return 0;
     const diffTime = new Date(end) - new Date(start);
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    return diffDays > 0 ? diffDays : 0;
+    const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+    return diffDays > 0 ? diffDays + 1 : 0;
   };
 
-  const days = calculateDays(trip.dates.start, trip.dates.end);
+  const days = trip.durationDays || calculateDays(trip.dates.start, trip.dates.end);
 
   return (
     <div className="space-y-6">
@@ -58,7 +58,7 @@ export const DatesStep = () => {
           <div>
             <span className="text-xs text-text-secondary uppercase block">Calculated Duration</span>
             <span className="font-heading font-bold text-sm text-text-main">
-              {days} Nights • {days + 1} Days
+              {days} Days • {Math.max(0, days - 1)} Nights
             </span>
           </div>
         </div>

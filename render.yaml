@@ -1,0 +1,65 @@
+# TripTastic Render Blueprint Spec
+# This file allows you to deploy the frontend and backend in one click.
+# Learn more at https://render.com/docs/blueprints
+
+services:
+  # ── Backend Web Service ─────────────────────────────────────────────────────
+  - type: web
+    name: triptastic-backend
+    env: node
+    plan: starter
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 5000
+      - key: HOST
+        value: 0.0.0.0
+      
+      # MySQL Database Configuration (Required, remote MySQL instance)
+      - key: DB_HOST
+        sync: false
+      - key: DB_PORT
+        value: "3306"
+      - key: DB_USER
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      - key: DB_NAME
+        sync: false
+
+      # Allowed CORS origin
+      - key: FRONTEND_URL
+        sync: false
+
+      # External API Keys (Secret)
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GEOAPIFY_API_KEY
+        sync: false
+      
+      # Optional External Keys
+      - key: PEXELS_API_KEY
+        sync: false
+      - key: CURRENCY_API_KEY
+        sync: false
+
+  # ── Frontend Static Site ────────────────────────────────────────────────────
+  - type: web
+    name: triptastic-frontend
+    env: static
+    plan: free
+    rootDir: .
+    buildCommand: npm install && npm run build
+    publishDir: dist
+    routes:
+      # SPA fallback routing rule to prevent 404s on page refresh
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_BASE_URL
+        sync: false

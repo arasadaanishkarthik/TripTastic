@@ -19,18 +19,6 @@ services:
         value: 0.0.0.0
       # PORT is automatically set by Render — do NOT hardcode it here
 
-      # MySQL Database Configuration (Required — use PlanetScale / Railway / Aiven)
-      - key: DB_HOST
-        sync: false
-      - key: DB_PORT
-        value: "3306"
-      - key: DB_USER
-        sync: false
-      - key: DB_PASSWORD
-        sync: false
-      - key: DB_NAME
-        sync: false
-
       # CORS — set to your Vercel production URL
       # All *.vercel.app preview URLs are automatically allowed.
       - key: FRONTEND_URL

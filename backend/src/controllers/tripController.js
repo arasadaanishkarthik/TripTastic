@@ -1,110 +1,78 @@
-// backend/src/controllers/tripController.js
-// Complete CRUD operations for Trips in MySQL.
+﻿// backend/src/controllers/tripController.js
+// Trip CRUD — in-memory store (no database dependency).
+// Trips are session-scoped and reset when the server restarts.
+// The frontend does not call these routes; they are preserved for
+// completeness and future use.
 
-const pool = require('../config/db');
+let _nextId = 1;
+const _trips = new Map();   // id -> trip object
+const _members = new Map(); // tripId -> member[]
+const _prefs   = new Map(); // tripId -> preferences JSON string
 
 /**
  * POST /api/trips
- * Body: { destinationId, title, startDate, endDate, travelers, budgetPerPerson, totalBudget, mode, preferences, travelerNames }
  */
 const createTrip = async (req, res, next) => {
-  let connection;
   try {
     const {
-      destinationId = 'goa',
-      title = 'My Trip',
+      destinationId  = 'goa',
+      title          = 'My Trip',
       startDate,
       endDate,
-      travelers = 2,
+      travelers      = 2,
       budgetPerPerson = 5000,
-      totalBudget = 10000,
-      mode = 'national',
-      preferences = [],
-      travelerNames = [],
+      totalBudget    = 10000,
+      mode           = 'national',
+      preferences    = [],
+      travelerNames  = [],
     } = req.body;
 
-    connection = await pool.getConnection();
-    await connection.beginTransaction();
+    const tripId   = _nextId++;
+    const now      = new Date().toISOString();
+    const trip     = {
+      id:               tripId,
+      destination_id:   destinationId,
+      title,
+      start_date:       startDate || null,
+      end_date:         endDate   || null,
+      travelers,
+      budget_per_person: budgetPerPerson,
+      total_budget:     totalBudget || (budgetPerPerson * travelers),
+      status:           'planned',
+      mode,
+      created_at:       now,
+      updated_at:       now,
+    };
 
-    // Check if destination exists in destinations table; if not, use 'goa' or insert
-    const [destCheck] = await connection.query(
-      'SELECT id FROM destinations WHERE id = ?',
-      [destinationId]
-    );
-    const validDestId = destCheck.length > 0 ? destinationId : 'goa';
+    _trips.set(tripId, trip);
 
-    const [tripResult] = await connection.query(
-      `INSERT INTO trips
-        (destination_id, title, start_date, end_date, travelers, budget_per_person, total_budget, status, mode)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'planned', ?)`,
-      [
-        validDestId,
-        title,
-        startDate ? new Date(startDate) : null,
-        endDate ? new Date(endDate) : null,
-        travelers,
-        budgetPerPerson,
-        totalBudget || (budgetPerPerson * travelers),
-        mode,
-      ]
-    );
-
-    const tripId = tripResult.insertId;
-
-    // Save preferences
     if (preferences && preferences.length > 0) {
-      await connection.query(
-        `INSERT INTO trip_preferences (trip_id, interests) VALUES (?, ?)
-         ON DUPLICATE KEY UPDATE interests = VALUES(interests)`,
-        [tripId, JSON.stringify(preferences)]
-      );
+      _prefs.set(tripId, JSON.stringify(preferences));
     }
 
-    // Save traveler members
     if (Array.isArray(travelerNames) && travelerNames.length > 0) {
-      for (const name of travelerNames) {
-        if (name && name.trim()) {
-          await connection.query(
-            `INSERT INTO trip_members (trip_id, name, role) VALUES (?, ?, 'member')`,
-            [tripId, name.trim()]
-          );
-        }
-      }
+      const memberList = travelerNames
+        .filter(n => n && n.trim())
+        .map((name, idx) => ({ id: idx + 1, trip_id: tripId, name: name.trim(), role: 'member', created_at: now }));
+      _members.set(tripId, memberList);
     }
 
-    await connection.commit();
-
-    res.status(201).json({
-      success: true,
-      message: 'Trip saved successfully',
-      tripId,
-    });
+    res.status(201).json({ success: true, message: 'Trip saved successfully', tripId });
   } catch (err) {
-    if (connection) await connection.rollback();
     next(err);
-  } finally {
-    if (connection) connection.release();
   }
 };
 
 /**
  * GET /api/trips
- * Returns all saved trips
  */
 const listTrips = async (req, res, next) => {
   try {
-    const [rows] = await pool.query(
-      `SELECT t.*, d.name AS destination_name, d.image_url AS destination_image
-       FROM trips t
-       LEFT JOIN destinations d ON t.destination_id = d.id
-       ORDER BY t.created_at DESC LIMIT 50`
-    );
+    const rows = [..._trips.values()]
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+      .slice(0, 50);
 
-    res.json({
-      success: true,
-      count: rows.length,
-      trips: rows,
-    });
+    res.json({ success: true, count: rows.length, trips: rows });
   } catch (err) {
     next(err);
   }
@@ -115,30 +83,19 @@ const listTrips = async (req, res, next) => {
  */
 const getTripById = async (req, res, next) => {
   try {
-    const { id } = req.params;
-    const [trips] = await pool.query(
-      `SELECT t.*, d.name AS destination_name, d.image_url AS destination_image, d.region
-       FROM trips t
-       LEFT JOIN destinations d ON t.destination_id = d.id
-       WHERE t.id = ?`,
-      [id]
-    );
+    const id = parseInt(req.params.id, 10);
+    const trip = _trips.get(id);
 
-    if (trips.length === 0) {
+    if (!trip) {
       return res.status(404).json({ success: false, message: 'Trip not found' });
     }
 
-    const [members] = await pool.query('SELECT * FROM trip_members WHERE trip_id = ?', [id]);
-    const [prefs]   = await pool.query('SELECT * FROM trip_preferences WHERE trip_id = ?', [id]);
+    const members = _members.get(id) || [];
+    const rawPrefs = _prefs.get(id);
+    let preferences = [];
+    try { preferences = rawPrefs ? JSON.parse(rawPrefs) : []; } catch {}
 
-    res.json({
-      success: true,
-      trip: {
-        ...trips[0],
-        members,
-        preferences: prefs[0]?.interests || [],
-      },
-    });
+    res.json({ success: true, trip: { ...trip, members, preferences } });
   } catch (err) {
     next(err);
   }
@@ -148,9 +105,14 @@ const getTripById = async (req, res, next) => {
  * PUT /api/trips/:id
  */
 const updateTrip = async (req, res, next) => {
-  let connection;
   try {
-    const { id } = req.params;
+    const id = parseInt(req.params.id, 10);
+    const trip = _trips.get(id);
+
+    if (!trip) {
+      return res.status(404).json({ success: false, message: 'Trip not found' });
+    }
+
     const {
       title,
       startDate,
@@ -162,61 +124,28 @@ const updateTrip = async (req, res, next) => {
       preferences,
     } = req.body;
 
-    connection = await pool.getConnection();
-    await connection.beginTransaction();
+    const updated = {
+      ...trip,
+      title:             title            ?? trip.title,
+      start_date:        startDate        ?? trip.start_date,
+      end_date:          endDate          ?? trip.end_date,
+      travelers:         travelers        ?? trip.travelers,
+      budget_per_person: budgetPerPerson  ?? trip.budget_per_person,
+      total_budget:      totalBudget      ?? trip.total_budget,
+      status:            status           ?? trip.status,
+      updated_at:        new Date().toISOString(),
+    };
 
-    const [existing] = await connection.query('SELECT id FROM trips WHERE id = ?', [id]);
-    if (existing.length === 0) {
-      return res.status(404).json({ success: false, message: 'Trip not found' });
+    _trips.set(id, updated);
+
+    if (preferences !== undefined) {
+      _prefs.set(id, JSON.stringify(preferences));
     }
 
-    await connection.query(
-      `UPDATE trips
-       SET title = COALESCE(?, title),
-           start_date = COALESCE(?, start_date),
-           end_date = COALESCE(?, end_date),
-           travelers = COALESCE(?, travelers),
-           budget_per_person = COALESCE(?, budget_per_person),
-           total_budget = COALESCE(?, total_budget),
-           status = COALESCE(?, status)
-       WHERE id = ?`,
-      [
-        title || null,
-        startDate ? new Date(startDate) : null,
-        endDate ? new Date(endDate) : null,
-        travelers || null,
-        budgetPerPerson || null,
-        totalBudget || null,
-        status || null,
-        id,
-      ]
-    );
-
-    if (preferences) {
-      await connection.query(
-        `INSERT INTO trip_preferences (trip_id, interests) VALUES (?, ?)
-         ON DUPLICATE KEY UPDATE interests = VALUES(interests)`,
-        [id, JSON.stringify(preferences)]
-      );
-    }
-
-    await connection.commit();
-
-    res.json({
-      success: true,
-      message: 'Trip updated successfully',
-    });
+    res.json({ success: true, message: 'Trip updated successfully' });
   } catch (err) {
-    if (connection) await connection.rollback();
     next(err);
-  } finally {
-    if (connection) connection.release();
   }
 };
 
-module.exports = {
-  createTrip,
-  listTrips,
-  getTripById,
-  updateTrip,
-};
+module.exports = { createTrip, listTrips, getTripById, updateTrip };

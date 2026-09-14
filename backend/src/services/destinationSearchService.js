@@ -1,26 +1,21 @@
 // backend/src/services/destinationSearchService.js
-// ─────────────────────────────────────────────────────────────────────────────
-// Destination Search Orchestrator
+// Destination Search Orchestrator — pure in-memory search, no database.
 //
 // Flow:
-//   1. Query MySQL for local results (LIKE + FULLTEXT)
-//   2. If local results < THRESHOLD → call external location provider
-//   3. Normalise external results to TripTastic format
-//   4. Deduplicate (external results whose name matches a local result are dropped)
-//   5. Return merged, sorted array with `source` field on every item
-// ─────────────────────────────────────────────────────────────────────────────
+//   1. Filter DESTINATIONS array with JS string matching
+//   2. If local results < THRESHOLD, call external Nominatim provider
+//   3. Deduplicate + merge
+//   4. Return merged array with source field on every item
 
-const pool                   = require('../config/db');
-const { searchExternalLocations } = require('./locationProvider');
+const { DESTINATIONS }                = require('../data/destinations');
+const { searchExternalLocations }     = require('./locationProvider');
 
-// Min local results before external provider is queried.
-// Configurable via backend/.env → LOCATION_API_THRESHOLD
 const DEFAULT_THRESHOLD = 1;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/** Normalise a MySQL destination row to the TripTastic place shape. */
-function normaliseLocalRow(row) {
+/** Normalise a DESTINATIONS entry to the TripTastic place shape. */
+function normaliseRow(row) {
   return {
     id:          row.id,
     name:        row.name,
@@ -38,128 +33,71 @@ function normaliseLocalRow(row) {
   };
 }
 
-/**
- * Deduplicate external results against local results.
- * An external result is dropped if a local result has the same name
- * (case-insensitive, trimmed).
- * @param {object[]} localResults
- * @param {object[]} externalResults
- * @returns {object[]} filtered external results
- */
 function deduplicateExternal(localResults, externalResults) {
-  const localNames = new Set(
-    localResults.map((d) => d.name.trim().toLowerCase())
-  );
-  return externalResults.filter(
-    (ext) => !localNames.has(ext.name.trim().toLowerCase())
-  );
+  const localNames = new Set(localResults.map(d => d.name.trim().toLowerCase()));
+  return externalResults.filter(ext => !localNames.has(ext.name.trim().toLowerCase()));
 }
 
-// ── Local MySQL search ────────────────────────────────────────────────────────
+// ── Local search ──────────────────────────────────────────────────────────────
 
-/**
- * Query MySQL for destinations matching the query string.
- * @param {string} q
- * @param {string} mode
- * @param {number} limit
- * @returns {Promise<object[]>}  normalised rows
- */
-async function mysqlSearch(q, mode, limit = 50) {
-  const term = `%${q.trim()}%`;
-  const params = [term, term, term, term, term, term];
-
-  let query = `
-    SELECT * FROM destinations
-    WHERE (
-      name        LIKE ? OR
-      city        LIKE ? OR
-      state       LIKE ? OR
-      country     LIKE ? OR
-      region      LIKE ? OR
-      description LIKE ?
-    )
-  `;
-
-  if (mode) {
-    query += ' AND travel_type = ?';
-    params.push(mode);
-  }
-
-  query += ' ORDER BY popular DESC, name ASC LIMIT ?';
-  params.push(limit);
-
-  const [rows] = await pool.query(query, params);
-  return rows.map(normaliseLocalRow);
+function localSearch(q, mode, limit = 50) {
+  const term = q.trim().toLowerCase();
+  let results = DESTINATIONS.filter(d => {
+    const match =
+      (d.name        || '').toLowerCase().includes(term) ||
+      (d.city        || '').toLowerCase().includes(term) ||
+      (d.state       || '').toLowerCase().includes(term) ||
+      (d.country     || '').toLowerCase().includes(term) ||
+      (d.region      || '').toLowerCase().includes(term) ||
+      (d.description || '').toLowerCase().includes(term);
+    if (!match) return false;
+    if (mode) return d.travel_type === mode;
+    return true;
+  });
+  results.sort((a, b) => (b.popular - a.popular) || a.name.localeCompare(b.name));
+  return results.slice(0, limit).map(normaliseRow);
 }
 
 // ── Fallback (empty query) ────────────────────────────────────────────────────
 
-/**
- * Return popular destinations when no search query is provided.
- * @param {string} mode
- * @param {string} category
- * @returns {Promise<object[]>}
- */
-async function mysqlPopular(mode, category) {
-  let query  = 'SELECT * FROM destinations WHERE 1=1';
-  const params = [];
-
-  if (mode) {
-    query += ' AND travel_type = ?';
-    params.push(mode);
-  }
-  if (category && category !== 'all') {
-    query += ' AND category = ?';
-    params.push(category);
-  }
-  query += ' ORDER BY popular DESC, name ASC LIMIT 30';
-
-  const [rows] = await pool.query(query, params);
-  return rows.map(normaliseLocalRow);
+function localPopular(mode, category) {
+  let results = [...DESTINATIONS];
+  if (mode) results = results.filter(d => d.travel_type === mode);
+  if (category && category !== 'all') results = results.filter(d => d.category === category);
+  results.sort((a, b) => (b.popular - a.popular) || a.name.localeCompare(b.name));
+  return results.slice(0, 30).map(normaliseRow);
 }
 
 // ── Main export ───────────────────────────────────────────────────────────────
 
-/**
- * Universal destination search.
- *
- * @param {object} opts
- * @param {string} opts.q        - search query (may be empty)
- * @param {string} [opts.mode]   - 'national' | 'international'
- * @param {string} [opts.category]
- * @returns {Promise<{ destinations: object[], usedExternal: boolean }>}
- */
 async function searchDestinations({ q, mode, category }) {
   const threshold = parseInt(process.env.LOCATION_API_THRESHOLD || String(DEFAULT_THRESHOLD), 10);
 
-  // ── No query: return popular results ─────────────────────────────────────
+  // No query: return popular results
   if (!q || q.trim() === '') {
-    const destinations = await mysqlPopular(mode, category);
+    const destinations = localPopular(mode, category);
     return { destinations, usedExternal: false };
   }
 
-  // ── Step 1: MySQL search ──────────────────────────────────────────────────
-  let localResults = await mysqlSearch(q, mode);
+  // Step 1: local search
+  let localResults = localSearch(q, mode);
+  console.log(`[destinationSearchService] Local returned ${localResults.length} results for "${q}"`);
 
-  console.log(`[destinationSearchService] MySQL returned ${localResults.length} results for "${q}"`);
-
-  // ── Step 2: External provider (when local results are sparse) ─────────────
+  // Step 2: External provider when local results are sparse
   let usedExternal = false;
   let externalResults = [];
 
   if (localResults.length < threshold) {
-    console.log(
-      `[destinationSearchService] Local results (${localResults.length}) < threshold (${threshold}), querying external provider…`
-    );
+    console.log(`[destinationSearchService] Local (${localResults.length}) < threshold (${threshold}), querying external...`);
     externalResults = await searchExternalLocations(q, mode);
     usedExternal    = externalResults.length > 0;
-    console.log(`[destinationSearchService] External provider returned ${externalResults.length} results`);
+    console.log(`[destinationSearchService] External returned ${externalResults.length} results`);
   }
 
-  // ── Step 3: Deduplicate ───────────────────────────────────────────────────
+  // Step 3: Deduplicate
   const uniqueExternal = deduplicateExternal(localResults, externalResults);
 
-  // ── Step 4: Merge — local first, external after ───────────────────────────
+  // Step 4: Merge — local first
   const destinations = [...localResults, ...uniqueExternal];
 
   return { destinations, usedExternal };

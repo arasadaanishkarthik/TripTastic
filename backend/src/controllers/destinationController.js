@@ -1,9 +1,9 @@
-// backend/src/controllers/destinationController.js
-// All destination-related request handlers — parameterized queries, no raw SQL in routes.
+﻿// backend/src/controllers/destinationController.js
+// Destination request handlers — pure in-memory data, no database dependency.
 
-const pool                   = require('../config/db');
+const { DESTINATIONS }               = require('../data/destinations');
 const { searchDestinations: searchService } = require('../services/destinationSearchService');
-const { searchExternalLocations } = require('../services/locationProvider');
+const { searchExternalLocations }    = require('../services/locationProvider');
 
 /**
  * GET /api/destinations
@@ -14,33 +14,22 @@ const getAllDestinations = async (req, res, next) => {
   try {
     const { mode, category, limit = 60, offset = 0 } = req.query;
 
-    let query = 'SELECT * FROM destinations WHERE 1=1';
-    const params = [];
+    let results = [...DESTINATIONS];
 
     if (mode) {
-      query += ' AND travel_type = ?';
-      params.push(mode);
+      results = results.filter(d => d.travel_type === mode);
     }
-    // category column (mountains, beaches, culture, city, nature, adventure)
     if (category && category !== 'all') {
-      query += ' AND category = ?';
-      params.push(category);
+      results = results.filter(d => d.category === category);
     }
 
-    // Popular first, then alphabetical
-    query += ' ORDER BY popular DESC, name ASC LIMIT ? OFFSET ?';
-    params.push(parseInt(limit, 10), parseInt(offset, 10));
+    // popular first, then alphabetical
+    results.sort((a, b) => (b.popular - a.popular) || a.name.localeCompare(b.name));
 
-    const [rows] = await pool.query(query, params);
+    const sliced = results.slice(parseInt(offset, 10), parseInt(offset, 10) + parseInt(limit, 10));
+    const destinations = sliced.map(r => ({ ...r, source: 'local' }));
 
-    // Tag every row with source='local'
-    const destinations = rows.map((r) => ({ ...r, source: 'local' }));
-
-    res.json({
-      success: true,
-      count:   destinations.length,
-      destinations,
-    });
+    res.json({ success: true, count: destinations.length, destinations });
   } catch (err) {
     next(err);
   }
@@ -48,14 +37,7 @@ const getAllDestinations = async (req, res, next) => {
 
 /**
  * GET /api/destinations/search?q=araku&mode=national
- *
- * Waterfall search:
- *   1. MySQL LIKE search (local)
- *   2. If local results < threshold, query external location provider (Nominatim by default)
- *   3. Deduplicate + merge
- *   4. Return normalised TripTastic destination format
- *
- * Each result includes a `source` field: 'local' | 'external'
+ * Waterfall: local array search first, then external (Nominatim) if sparse.
  */
 const searchDestinations = async (req, res, next) => {
   try {
@@ -86,13 +68,13 @@ const searchDestinations = async (req, res, next) => {
 const getDestinationById = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const [rows] = await pool.query('SELECT * FROM destinations WHERE id = ?', [id]);
+    const dest = DESTINATIONS.find(d => d.id === id);
 
-    if (rows.length === 0) {
+    if (!dest) {
       return res.status(404).json({ success: false, message: 'Destination not found' });
     }
 
-    res.json({ success: true, destination: { ...rows[0], source: 'local' } });
+    res.json({ success: true, destination: { ...dest, source: 'local' } });
   } catch (err) {
     next(err);
   }

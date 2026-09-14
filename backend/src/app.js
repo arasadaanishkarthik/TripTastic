@@ -57,6 +57,13 @@ app.use(cors({
 
 app.use(express.json({ limit: '10mb' }));
 
+// ── Bare health check (no /api prefix) ───────────────────────────────────────
+// Render and other platforms probe GET /health — this must respond 200
+// without requiring any external service.
+app.get('/health', (req, res) => {
+  res.status(200).json({ success: true, message: 'TripTastic API is healthy' });
+});
+
 // API Routes
 app.use('/api', routes);
 

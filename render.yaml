@@ -1,6 +1,7 @@
-# TripTastic Render Blueprint Spec
-# This file allows you to deploy the frontend and backend in one click.
-# Learn more at https://render.com/docs/blueprints
+# TripTastic Render Blueprint
+# Deploys ONLY the backend to Render.
+# The frontend is deployed separately to Vercel.
+# Learn more: https://render.com/docs/blueprints
 
 services:
   # ── Backend Web Service ─────────────────────────────────────────────────────
@@ -14,12 +15,11 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
-      - key: PORT
-        value: 5000
       - key: HOST
         value: 0.0.0.0
-      
-      # MySQL Database Configuration (Required, remote MySQL instance)
+      # PORT is automatically set by Render — do NOT hardcode it here
+
+      # MySQL Database Configuration (Required — use PlanetScale / Railway / Aiven)
       - key: DB_HOST
         sync: false
       - key: DB_PORT
@@ -31,35 +31,27 @@ services:
       - key: DB_NAME
         sync: false
 
-      # Allowed CORS origin
+      # CORS — set to your Vercel production URL
+      # All *.vercel.app preview URLs are automatically allowed.
       - key: FRONTEND_URL
         sync: false
 
-      # External API Keys (Secret)
-      - key: GROQ_API_KEY
+      # Google Gemini AI (Secret — set in Render dashboard)
+      - key: GEMINI_API_KEY
         sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: GEMINI_TIMEOUT_MS
+        value: "45000"
+
+      # Places API Key (Secret — set in Render dashboard)
       - key: GEOAPIFY_API_KEY
         sync: false
-      
-      # Optional External Keys
+
+      # Optional API Keys
       - key: PEXELS_API_KEY
         sync: false
       - key: CURRENCY_API_KEY
         sync: false
-
-  # ── Frontend Static Site ────────────────────────────────────────────────────
-  - type: web
-    name: triptastic-frontend
-    env: static
-    plan: free
-    rootDir: .
-    buildCommand: npm install && npm run build
-    publishDir: dist
-    routes:
-      # SPA fallback routing rule to prevent 404s on page refresh
-      - type: rewrite
-        source: /*
-        destination: /index.html
-    envVars:
-      - key: VITE_API_BASE_URL
-        sync: false
+      - key: CURRENCY_BASE
+        value: INR

@@ -16,7 +16,7 @@ router.get('/health', (req, res) => {
     success:   true,
     message:   'TripTastic API is running',
     timestamp: new Date().toISOString(),
-    version:   '1.2.0',
+    version:   '1.3.0',
     integrations: {
       // Always-active (free, no key)
       weather:  true,                        // Open-Meteo — always available
@@ -24,7 +24,7 @@ router.get('/health', (req, res) => {
       location: true,                        // Nominatim — always available
       // Active when configured
       ai:       { active: ai.isConfigured(), provider: ai.getActiveProvider(), model: ai.getModelName() },
-      groq:     require('../services/groqClient').isConfigured(),
+      gemini:   { active: ai.isConfigured(), model: ai.getModelName() },
       images:   { active: true, provider: images.isConfigured() ? 'pexels' : 'loremflickr' },
       // Placeholders — not yet active
       flights:  { active: flights.isConfigured(), reason: 'PROVIDER_NOT_CONFIGURED' },
@@ -35,6 +35,7 @@ router.get('/health', (req, res) => {
 
 // ── Always-active free integrations ──────────────────────────────────────────
 router.use('/destinations', require('./destinationRoutes'));
+router.use('/places',       require('./placeRoutes'));
 router.use('/trips',        require('./tripRoutes'));
 router.use('/itinerary',    require('./itineraryRoutes'));
 router.use('/weather',      require('./weatherRoutes'));

@@ -16,7 +16,7 @@ const HOST = process.env.HOST || '0.0.0.0';
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
 const startServer = async () => {
-  // ── AI Provider Diagnostics (Groq / Gemini) ───────────────────────────────
+  // ── Google Gemini AI Diagnostics ─────────────────────────────────────────
   ai.logDiagnostics();
 
   // ── MySQL Connectivity Check ─────────────────────────────────────────────

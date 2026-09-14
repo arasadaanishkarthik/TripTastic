@@ -1,133 +1,227 @@
 // backend/src/services/geminiClient.js
 // ─────────────────────────────────────────────────────────────────────────────
-// Single source of truth for talking to Google Gemini.
+// Single source of truth for Google Gemini AI.
 //
-// - Reads GEMINI_API_KEY / GEMINI_MODEL from process.env (loaded via dotenv
-//   in server.js, which runs before anything in this file is required).
-// - Uses the current, supported SDK: @google/genai
-//   (the older `@google/generative-ai` package is now legacy/deprecated).
-// - Never logs the raw API key — only whether it is configured.
-// - Normalises Gemini/network failures into a small set of error codes so
-//   the rest of the app (controllers) can react sensibly instead of
-//   collapsing every failure into "not configured".
+// - Uses the official, recommended SDK: @google/genai
+// - Reads GEMINI_API_KEY / GEMINI_MODEL from process.env on demand.
+// - Default model: gemini-2.5-flash (fast, lightweight, production-ready).
+// - Never logs raw API keys — only logs configuration status boolean.
+// - Normalises Gemini/network failures into typed error codes:
+//   AUTH_ERROR | INVALID_MODEL | RATE_LIMIT | TIMEOUT | NETWORK_ERROR | PARSE_ERROR | UNKNOWN
 // ─────────────────────────────────────────────────────────────────────────────
 
 const { GoogleGenAI } = require('@google/genai');
 
-const GEMINI_API_KEY  = process.env.GEMINI_API_KEY || '';
-// Match the project configuration in backend/.env.example and the current
-// Gemini defaults used by the app: flash is the default fast model for AI trip
-// planning and keeps new API-key integrations working even when no explicit
-// GEMINI_MODEL is set in the environment.
-const GEMINI_MODEL    = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
-// How long to wait for Gemini before giving up (avoids the request hanging
-// forever if Google's API is slow/unreachable). Override with GEMINI_TIMEOUT_MS.
-const GEMINI_TIMEOUT_MS = parseInt(process.env.GEMINI_TIMEOUT_MS || '60000', 10);
+const DEFAULT_MODEL = 'gemini-2.5-flash';
+const DEFAULT_TIMEOUT_MS = 45000;
 
-let client = null;
-if (GEMINI_API_KEY) {
-  client = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+function getApiKey() {
+  return (process.env.GEMINI_API_KEY || '').trim();
+}
+
+function getModelName() {
+  return (process.env.GEMINI_MODEL || '').trim() || DEFAULT_MODEL;
+}
+
+function getTimeoutMs() {
+  const custom = parseInt(process.env.GEMINI_TIMEOUT_MS, 10);
+  return Number.isFinite(custom) && custom > 0 ? custom : DEFAULT_TIMEOUT_MS;
 }
 
 /** Whether a Gemini API key is present in the environment. */
 function isConfigured() {
-  return Boolean(GEMINI_API_KEY);
-}
-
-/** The model name currently configured (with fallback). */
-function getModelName() {
-  return GEMINI_MODEL;
+  return Boolean(getApiKey());
 }
 
 /**
  * Log configuration status once at startup.
- * Deliberately logs booleans only — never the key value.
+ * Deliberately logs booleans and model name only — never the secret key.
  */
 function logDiagnostics() {
   console.log(`[gemini] GEMINI_API_KEY configured: ${isConfigured()}`);
-  console.log(`[gemini] GEMINI_MODEL configured: ${Boolean(process.env.GEMINI_MODEL)} (using "${GEMINI_MODEL}")`);
+  console.log(`[gemini] GEMINI_MODEL: "${getModelName()}"`);
 }
 
 /**
- * A typed error so callers/controllers can map to the right HTTP status
- * and user-facing message without string-matching.
+ * Typed error for Gemini operations so controllers and services
+ * can handle specific failures (e.g. rate limits, auth) cleanly.
  */
 class GeminiError extends Error {
   constructor(code, message, cause) {
     super(message);
     this.name = 'GeminiError';
-    this.code = code; // NO_API_KEY | AUTH_ERROR | INVALID_MODEL | RATE_LIMIT | NETWORK_ERROR | PARSE_ERROR | UNKNOWN
+    this.code = code; // NO_API_KEY | AUTH_ERROR | INVALID_MODEL | RATE_LIMIT | NETWORK_ERROR | TIMEOUT | PARSE_ERROR | UNKNOWN
     this.cause = cause;
   }
 }
 
 /**
- * Inspect an error thrown by the SDK/fetch layer and classify it.
+ * Inspect an error thrown by the Gemini SDK or network layer and classify it.
  */
 function classifyError(err) {
-  const status  = err?.status || err?.response?.status || err?.cause?.status;
+  const status = err?.status || err?.response?.status || err?.cause?.status || err?.statusCode;
   const message = (err?.message || '').toLowerCase();
+  const detail = JSON.stringify(err?.error || err?.cause || {}).toLowerCase();
+  const fullText = `${message} ${detail}`;
 
-  if (status === 401 || status === 403 || message.includes('api key not valid') || message.includes('permission')) {
-    return new GeminiError('AUTH_ERROR', 'Gemini rejected the API key (invalid or unauthorized). Double-check GEMINI_API_KEY in backend/.env.', err);
+  if (
+    status === 401 ||
+    status === 403 ||
+    fullText.includes('api_key_invalid') ||
+    fullText.includes('api key not valid') ||
+    fullText.includes('permission_denied') ||
+    fullText.includes('unauthorized') ||
+    fullText.includes('forbidden')
+  ) {
+    return new GeminiError(
+      'AUTH_ERROR',
+      'Gemini API key is invalid or unauthorized. Please verify GEMINI_API_KEY in backend/.env.',
+      err
+    );
   }
-  if (status === 404 || message.includes('not found') && message.includes('model')) {
-    return new GeminiError('INVALID_MODEL', `Gemini model "${GEMINI_MODEL}" was not found. Check GEMINI_MODEL in backend/.env.`, err);
+
+  if (
+    status === 404 ||
+    fullText.includes('not_found') ||
+    fullText.includes('model not found') ||
+    fullText.includes('unsupported model')
+  ) {
+    return new GeminiError(
+      'INVALID_MODEL',
+      `Gemini model "${getModelName()}" was not found or is unsupported. Check GEMINI_MODEL in backend/.env.`,
+      err
+    );
   }
-  if (status === 429 || message.includes('quota') || message.includes('rate limit') || message.includes('resource_exhausted')) {
-    return new GeminiError('RATE_LIMIT', 'Gemini quota or rate limit exceeded. Please wait and try again.', err);
+
+  if (
+    status === 429 ||
+    fullText.includes('quota') ||
+    fullText.includes('rate_limit') ||
+    fullText.includes('resource_exhausted') ||
+    fullText.includes('too many requests')
+  ) {
+    return new GeminiError(
+      'RATE_LIMIT',
+      'Gemini usage quota or rate limit exceeded. Please wait a few seconds and try again.',
+      err
+    );
   }
-  if (message.includes('fetch failed') || message.includes('network') || message.includes('enotfound') || message.includes('econnrefused') || message.includes('etimedout')) {
-    return new GeminiError('NETWORK_ERROR', 'Could not reach the Gemini API (network error). Check your internet connection.', err);
+
+  if (
+    err?.name === 'AbortError' ||
+    status === 408 ||
+    fullText.includes('timeout') ||
+    fullText.includes('abort')
+  ) {
+    return new GeminiError(
+      'TIMEOUT',
+      `Gemini did not respond within ${getTimeoutMs() / 1000}s. Please try again.`,
+      err
+    );
   }
-  if (err?.name === 'AbortError' || message.includes('abort')) {
-    return new GeminiError('TIMEOUT', `Gemini did not respond within ${GEMINI_TIMEOUT_MS / 1000}s. Please try again.`, err);
+
+  if (
+    fullText.includes('fetch failed') ||
+    fullText.includes('econnrefused') ||
+    fullText.includes('enotfound') ||
+    fullText.includes('etimedout') ||
+    fullText.includes('network')
+  ) {
+    return new GeminiError(
+      'NETWORK_ERROR',
+      'Could not connect to Google Gemini API. Please check your network connection.',
+      err
+    );
   }
-  return new GeminiError('UNKNOWN', err?.message || 'Unknown Gemini error', err);
+
+  return new GeminiError('UNKNOWN', err?.message || 'Unknown Gemini API error', err);
+}
+
+// Cached client instance mapped by API key
+let cachedKey = null;
+let cachedClient = null;
+
+function getClient() {
+  const apiKey = getApiKey();
+  if (!apiKey) {
+    throw new GeminiError(
+      'NO_API_KEY',
+      'GEMINI_API_KEY is not configured. Please set GEMINI_API_KEY in backend/.env and restart.'
+    );
+  }
+
+  if (cachedClient && cachedKey === apiKey) {
+    return cachedClient;
+  }
+
+  cachedKey = apiKey;
+  cachedClient = new GoogleGenAI({ apiKey });
+  return cachedClient;
 }
 
 /**
  * Call Gemini's generateContent and return the response text.
  *
- * @param {string|Array} contents - prompt text, or an array of content parts
- * @param {object} [config] - optional GenerateContentConfig (temperature, responseMimeType, etc.)
+ * @param {string|Array} contents - Prompt text, or structured contents
+ * @param {object} [options] - Options { temperature, responseMimeType, maxOutputTokens, systemInstruction }
+ * @param {object} [requestContext] - Optional context for debug logging (e.g. destination name)
  * @returns {Promise<string>}
  * @throws {GeminiError}
  */
-async function generateText(contents, config, requestContext = {}) {
-  if (!isConfigured()) {
-    throw new GeminiError('NO_API_KEY', 'GEMINI_API_KEY is not configured. Please set it in backend/.env and restart the server.');
-  }
+async function generateText(contents, options = {}, requestContext = {}) {
+  const client = getClient();
+  const model = getModelName();
+  const timeoutMs = getTimeoutMs();
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    console.log(`[gemini] request started`);
-    console.log(`[gemini] model: ${GEMINI_MODEL}`);
-    if (requestContext.destination) {
-      console.log(`[gemini] destination: ${requestContext.destination}`);
+    const promptText = Array.isArray(contents) ? contents.join('\n\n') : String(contents);
+
+    const config = {
+      abortSignal: controller.signal,
+    };
+
+    if (options.temperature !== undefined) {
+      config.temperature = options.temperature;
     }
+    if (options.responseMimeType) {
+      config.responseMimeType = options.responseMimeType;
+    }
+    if (options.maxOutputTokens) {
+      config.maxOutputTokens = options.maxOutputTokens;
+    }
+    if (options.topP !== undefined) {
+      config.topP = options.topP;
+    }
+    if (options.topK !== undefined) {
+      config.topK = options.topK;
+    }
+    if (options.systemInstruction) {
+      config.systemInstruction = options.systemInstruction;
+    }
+
+    console.log(`[gemini] generateContent started with model "${model}"${requestContext.destination ? ` for "${requestContext.destination}"` : ''}`);
+
     const response = await client.models.generateContent({
-      model: GEMINI_MODEL,
-      contents,
-      config: { ...(config || {}), abortSignal: controller.signal },
+      model,
+      contents: promptText,
+      config,
     });
 
     const text = response?.text;
-    if (typeof text !== 'string' || !text.length) {
-      throw new GeminiError('UNKNOWN', 'Gemini returned an empty response.');
+    if (typeof text !== 'string' || !text.trim().length) {
+      throw new GeminiError('UNKNOWN', 'Gemini returned an empty text response.');
     }
-    console.log('[gemini] response received');
-    console.log('[gemini] request completed');
+
+    console.log(`[gemini] generateContent completed (${text.length} chars)`);
     return text;
   } catch (err) {
     if (err instanceof GeminiError) throw err;
-    const classified = classifyError(err);
-    console.error(`[gemini] request failed: ${classified.code}`);
-    throw classified;
+    throw classifyError(err);
   } finally {
-    clearTimeout(timer);
+    clearTimeout(timeoutId);
   }
 }
 

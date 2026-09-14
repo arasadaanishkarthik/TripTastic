@@ -1,11 +1,11 @@
 // backend/src/controllers/itineraryController.js
-// Handles AI itinerary generation and trip chat requests.
+// Handles AI itinerary generation and trip chat requests using Google Gemini.
 
 const { generateItinerary, chatAboutItinerary } = require('../services/itineraryService');
 
 const isDev = process.env.NODE_ENV !== 'production';
 
-// Map GeminiError codes -> HTTP status for the /generate endpoint.
+// Map error codes -> HTTP status
 const STATUS_BY_CODE = {
   NO_API_KEY:    503,
   AUTH_ERROR:    401,
@@ -19,12 +19,12 @@ const STATUS_BY_CODE = {
 
 // User-facing chat bubble text for the /chat endpoint, keyed by error code.
 const CHAT_REPLIES = {
-  NO_API_KEY:    'AI assistant is not configured. Please configure GROQ_API_KEY in backend/.env.',
-  AUTH_ERROR:    "AI assistant couldn't authenticate. Please verify your API key in backend/.env.",
-  INVALID_MODEL: 'AI assistant model is invalid or unavailable. Please check the server configuration.',
-  RATE_LIMIT:    'AI assistant is temporarily rate-limited. Please try again in a moment.',
-  NETWORK_ERROR: "AI assistant couldn't reach the AI service right now. Please try again shortly.",
-  TIMEOUT:       'AI assistant is taking too long to respond. Please try again.',
+  NO_API_KEY:    'AI assistant is not configured. Please configure GEMINI_API_KEY in backend/.env.',
+  AUTH_ERROR:    "AI assistant couldn't authenticate with Gemini. Please verify GEMINI_API_KEY in backend/.env.",
+  INVALID_MODEL: 'Gemini model is invalid or unavailable. Please check GEMINI_MODEL in backend/.env.',
+  RATE_LIMIT:    'Gemini is temporarily rate-limited. Please try again in a moment.',
+  NETWORK_ERROR: "Couldn't reach Google Gemini right now. Please try again shortly.",
+  TIMEOUT:       'Gemini request timed out. Please try again.',
   UNKNOWN:       "I'm having trouble connecting right now. Please try again in a moment.",
 };
 
@@ -62,13 +62,12 @@ const generate = async (req, res, next) => {
   } catch (err) {
     console.error('[itineraryController] generate error:', err.code || '', err.message);
 
-    if (err.name === 'AIError' || err.name === 'GeminiError' || err.name === 'GroqError') {
+    if (err.name === 'AIError' || err.name === 'GeminiError') {
       const { status, code, message } = describeError(err);
       return res.status(status).json({
         success: false,
         message,
         code,
-        // Only include the underlying cause in development, never in prod.
         ...(isDev && err.cause?.message ? { detail: err.cause.message } : {}),
       });
     }
@@ -95,7 +94,7 @@ const chat = async (req, res, next) => {
   } catch (err) {
     console.error('[itineraryController] chat error:', err.code || '', err.message);
 
-    const isAiErr = err.name === 'AIError' || err.name === 'GeminiError' || err.name === 'GroqError';
+    const isAiErr = err.name === 'AIError' || err.name === 'GeminiError';
     const code  = isAiErr ? (err.code || 'UNKNOWN') : 'UNKNOWN';
     const reply = CHAT_REPLIES[code] || CHAT_REPLIES.UNKNOWN;
 

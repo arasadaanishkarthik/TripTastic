@@ -2,11 +2,38 @@
 // Centralised frontend API client.
 // All backend calls go through here — React never touches MySQL or external APIs directly.
 
-const BASE_URL = (
-  import.meta.env.VITE_API_BASE_URL ||
-  import.meta.env.VITE_API_URL ||
-  'http://localhost:5000/api'
-).replace(/\/$/, '');
+/**
+ * Normalizes the API Base URL from Vite environment variables.
+ * Ensures the resulting base URL always ends with `/api` and has no trailing slash.
+ * Works seamlessly whether VITE_API_URL is provided as:
+ * - https://triptastic-e95w.onrender.com
+ * - https://triptastic-e95w.onrender.com/api
+ * - https://triptastic-e95w.onrender.com/api/
+ * - http://localhost:5000
+ * - or left undefined (defaults to http://localhost:5000/api)
+ */
+function getApiBaseUrl() {
+  const raw = (
+    import.meta.env.VITE_API_BASE_URL ||
+    import.meta.env.VITE_API_URL ||
+    'http://localhost:5000/api'
+  );
+
+  const trimmed = String(raw).trim().replace(/\/+$/, '');
+  if (!trimmed) {
+    return 'http://localhost:5000/api';
+  }
+
+  // If already ending in /api, return directly
+  if (trimmed.endsWith('/api')) {
+    return trimmed;
+  }
+
+  // Otherwise append /api to match Express router mounting (app.use('/api', routes))
+  return `${trimmed}/api`;
+}
+
+const BASE_URL = getApiBaseUrl();
 
 /**
  * Generic fetch wrapper with timeout + error handling.
@@ -18,7 +45,8 @@ async function apiFetch(path, options = {}) {
   const timeoutId = setTimeout(() => controller.abort(), 75000);
 
   try {
-    const url = `${BASE_URL}${path}`;
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    const url = `${BASE_URL}${cleanPath}`;
     let res;
     try {
       res = await fetch(url, {
@@ -125,6 +153,28 @@ export async function chatWithAI(itinerary, message) {
   return data.reply || '';
 }
 
+// ── Places Discovery API ─────────────────────────────────────────────────────
+
+/**
+ * Discover verified tourist attractions and places for a destination.
+ * @param {string|object} destination - Name of the destination or destination object
+ * @param {object} [options]
+ * @param {string[]} [options.preferences]
+ * @param {number} [options.limit]
+ */
+export async function searchPlaces(destination, options = {}) {
+  const params = new URLSearchParams();
+  const destName = typeof destination === 'object' ? destination.name : destination;
+  if (destName) params.append('destination', destName);
+  if (options.preferences && options.preferences.length) {
+    params.append('preferences', options.preferences.join(','));
+  }
+  if (options.limit) {
+    params.append('limit', String(options.limit));
+  }
+  return apiFetch(`/places/search?${params}`);
+}
+
 // ── Weather API (Open-Meteo, free) ────────────────────────────────────────────
 
 /**
@@ -174,6 +224,56 @@ export async function convertCurrency(from, to, amount) {
 export async function getSupportedCurrencies() {
   const data = await apiFetch('/currency/supported');
   return data.currencies || [];
+}
+
+// ── Flights & Hotels APIs ────────────────────────────────────────────────────
+
+/**
+ * Check flight service status.
+ */
+export async function getFlightStatus() {
+  return apiFetch('/flights/status');
+}
+
+/**
+ * Autocomplete airport query.
+ * @param {string} query
+ */
+export async function searchAirports(query) {
+  return apiFetch(`/flights/airports?q=${encodeURIComponent(query)}`);
+}
+
+/**
+ * Search flight offers.
+ * @param {object} params
+ */
+export async function searchFlights(params) {
+  const query = new URLSearchParams(params);
+  return apiFetch(`/flights/search?${query}`);
+}
+
+/**
+ * Check hotel service status.
+ */
+export async function getHotelStatus() {
+  return apiFetch('/hotels/status');
+}
+
+/**
+ * Search hotel destinations.
+ * @param {string} query
+ */
+export async function searchHotelDestinations(query) {
+  return apiFetch(`/hotels/destinations?q=${encodeURIComponent(query)}`);
+}
+
+/**
+ * Search hotel offers.
+ * @param {object} params
+ */
+export async function searchHotels(params) {
+  const query = new URLSearchParams(params);
+  return apiFetch(`/hotels/search?${query}`);
 }
 
 // ── Image API (Pexels / Curated Fallback) ────────────────────────────────────
@@ -313,5 +413,3 @@ export async function getDestinationImage(query) {
     _imgInFlight.delete(cacheKey);
   }
 }
-
-

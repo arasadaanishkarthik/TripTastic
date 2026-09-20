@@ -590,8 +590,48 @@ async function generateItinerary(tripData) {
   return safeFallback;
 }
 
+/**
+ * Chat with AI about an itinerary.
+ * @param {object} itinerary
+ * @param {string} message
+ * @returns {Promise<string>}
+ */
+async function chatAboutItinerary(itinerary = {}, message = '') {
+  const destName = itinerary.destination?.name || itinerary.destination || 'your destination';
+
+  if (ai.isConfigured()) {
+    try {
+      const prompt = `You are TripTastic AI Assistant, an expert travel guide.
+The user is asking about their trip to ${destName}.
+Current Itinerary summary:
+${JSON.stringify({
+  destination: itinerary.destination,
+  days: (itinerary.days || []).map(d => ({ day: d.day, title: d.title, activities: (d.activities || []).map(a => a.title) }))
+}, null, 2)}
+
+User Question: "${message}"
+
+Give a helpful, concise, and enthusiastic response (under 120 words) with actionable local advice, tips, or itinerary suggestions.`;
+
+      const reply = await ai.generateText(prompt, {
+        temperature: 0.7,
+        maxOutputTokens: 300,
+      }, { destination: destName });
+
+      if (reply && reply.trim()) {
+        return reply.trim();
+      }
+    } catch (err) {
+      console.warn('[chatAboutItinerary] AI call failed:', err.message);
+    }
+  }
+
+  return `Here are some recommendations for ${destName}: Make sure to check out local dining spots, verify sunset viewpoints, and keep some buffer time between activities for the best experience!`;
+}
+
 module.exports = {
   generateItinerary,
+  chatAboutItinerary,
   calculateRequestedDays,
   buildFallbackFromAttractions,
   clusterAttractionsByDays,
